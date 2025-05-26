@@ -894,18 +894,16 @@ EOF
         echo "----------------------------"
         colorized_echo red "Using SQLite as database"
         echo "----------------------------"
-        # Use our custom docker-compose.yml for SQLite
-        cat > "$docker_file_path" <<EOF
-services:
-  marzban:
-    image: naymintun800/marzban:${marzban_version}
-    restart: always
-    env_file: .env
-    network_mode: host
-    volumes:
-      - /var/lib/marzban:/var/lib/marzban
-      - /var/lib/marzban/logs:/var/lib/marzban-node
-EOF
+        colorized_echo blue "Fetching compose file"
+        curl -sL "$FILES_URL_PREFIX/docker-compose.yml" -o "$docker_file_path"
+
+        # Install requested version
+        if [ "$marzban_version" == "latest" ]; then
+            yq -i '.services.marzban.image = "naymintun800/marzban:latest"' "$docker_file_path"
+        else
+            yq -i ".services.marzban.image = \"naymintun800/marzban:${marzban_version}\"" "$docker_file_path"
+        fi
+        echo "Installing $marzban_version version"
         colorized_echo green "File saved in $APP_DIR/docker-compose.yml"
 
         colorized_echo blue "Fetching .env file"

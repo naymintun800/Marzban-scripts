@@ -729,7 +729,8 @@ services:
     network_mode: host
     volumes:
       - /var/lib/marzban:/var/lib/marzban
-      - /var/lib/marzban/logs:/var/lib/marzban-node
+      - ./:/code
+    command: bash -c "alembic upgrade head && python3 main.py"
     depends_on:
       mariadb:
         condition: service_healthy
@@ -746,20 +747,20 @@ services:
       MYSQL_USER: \${MYSQL_USER}
       MYSQL_PASSWORD: \${MYSQL_PASSWORD}
     command:
-      - --bind-address=127.0.0.1                  # Restricts access to localhost for increased security
-      - --character_set_server=utf8mb4            # Sets UTF-8 character set for full Unicode support
-      - --collation_server=utf8mb4_unicode_ci     # Defines collation for Unicode
-      - --host-cache-size=0                       # Disables host cache to prevent DNS issues
-      - --innodb-open-files=1024                  # Sets the limit for InnoDB open files
-      - --innodb-buffer-pool-size=256M            # Allocates buffer pool size for InnoDB
-      - --binlog_expire_logs_seconds=1209600      # Sets binary log expiration to 14 days (2 weeks)
-      - --innodb-log-file-size=64M                # Sets InnoDB log file size to balance log retention and performance
-      - --innodb-log-files-in-group=2             # Uses two log files to balance recovery and disk I/O
-      - --innodb-doublewrite=0                    # Disables doublewrite buffer (reduces disk I/O; may increase data loss risk)
-      - --general_log=0                           # Disables general query log to reduce disk usage
-      - --slow_query_log=1                        # Enables slow query log for identifying performance issues
-      - --slow_query_log_file=/var/lib/mysql/slow.log # Logs slow queries for troubleshooting
-      - --long_query_time=2                       # Defines slow query threshold as 2 seconds
+      - --bind-address=127.0.0.1
+      - --character_set_server=utf8mb4
+      - --collation_server=utf8mb4_unicode_ci
+      - --host-cache-size=0
+      - --innodb-open-files=1024
+      - --innodb-buffer-pool-size=256M
+      - --binlog_expire_logs_seconds=1209600
+      - --innodb-log-file-size=64M
+      - --innodb-log-files-in-group=2
+      - --innodb-doublewrite=0
+      - --general_log=0
+      - --slow_query_log=1
+      - --slow_query_log_file=/var/lib/mysql/slow.log
+      - --long_query_time=2
     volumes:
       - /var/lib/marzban/mysql:/var/lib/mysql
     healthcheck:
@@ -782,13 +783,8 @@ EOF
         # Comment out the SQLite line
         sed -i 's~^\(SQLALCHEMY_DATABASE_URL = "sqlite:////var/lib/marzban/db.sqlite3"\)~#\1~' "$APP_DIR/.env"
 
-
-        # Add the MySQL connection string
-        #echo -e '\nSQLALCHEMY_DATABASE_URL = "mysql+pymysql://marzban:password@127.0.0.1:3306/marzban"' >> "$APP_DIR/.env"
-
         sed -i 's/^# \(XRAY_JSON = .*\)$/\1/' "$APP_DIR/.env"
         sed -i 's~\(XRAY_JSON = \).*~\1"/var/lib/marzban/xray_config.json"~' "$APP_DIR/.env"
-
 
         prompt_for_marzban_password
         MYSQL_ROOT_PASSWORD=$(tr -dc 'A-Za-z0-9' </dev/urandom | head -c 20)
@@ -820,7 +816,8 @@ services:
     network_mode: host
     volumes:
       - /var/lib/marzban:/var/lib/marzban
-      - /var/lib/marzban/logs:/var/lib/marzban-node
+      - ./:/code
+    command: bash -c "alembic upgrade head && python3 main.py"
     depends_on:
       mysql:
         condition: service_healthy
@@ -837,21 +834,21 @@ services:
       MYSQL_USER: \${MYSQL_USER}
       MYSQL_PASSWORD: \${MYSQL_PASSWORD}
     command:
-      - --mysqlx=OFF                             # Disables MySQL X Plugin to save resources if X Protocol isn't used
-      - --bind-address=127.0.0.1                  # Restricts access to localhost for increased security
-      - --character_set_server=utf8mb4            # Sets UTF-8 character set for full Unicode support
-      - --collation_server=utf8mb4_unicode_ci     # Defines collation for Unicode
-      - --log-bin=mysql-bin                       # Enables binary logging for point-in-time recovery
-      - --binlog_expire_logs_seconds=1209600      # Sets binary log expiration to 14 days
-      - --host-cache-size=0                       # Disables host cache to prevent DNS issues
-      - --innodb-open-files=1024                  # Sets the limit for InnoDB open files
-      - --innodb-buffer-pool-size=256M            # Allocates buffer pool size for InnoDB
-      - --innodb-log-file-size=64M                # Sets InnoDB log file size to balance log retention and performance
-      - --innodb-log-files-in-group=2             # Uses two log files to balance recovery and disk I/O
-      - --general_log=0                           # Disables general query log for lower disk usage
-      - --slow_query_log=1                        # Enables slow query log for performance analysis
-      - --slow_query_log_file=/var/lib/mysql/slow.log # Logs slow queries for troubleshooting
-      - --long_query_time=2                       # Defines slow query threshold as 2 seconds
+      - --mysqlx=OFF
+      - --bind-address=127.0.0.1
+      - --character_set_server=utf8mb4
+      - --collation_server=utf8mb4_unicode_ci
+      - --log-bin=mysql-bin
+      - --binlog_expire_logs_seconds=1209600
+      - --host-cache-size=0
+      - --innodb-open-files=1024
+      - --innodb-buffer-pool-size=256M
+      - --innodb-log-file-size=64M
+      - --innodb-log-files-in-group=2
+      - --general_log=0
+      - --slow_query_log=1
+      - --slow_query_log_file=/var/lib/mysql/slow.log
+      - --long_query_time=2
     volumes:
       - /var/lib/marzban/mysql:/var/lib/mysql
     healthcheck:
@@ -860,7 +857,6 @@ services:
       interval: 5s
       timeout: 5s
       retries: 55
-      
 EOF
         echo "----------------------------"
         colorized_echo red "Using MySQL as database"
@@ -874,13 +870,8 @@ EOF
         # Comment out the SQLite line
         sed -i 's~^\(SQLALCHEMY_DATABASE_URL = "sqlite:////var/lib/marzban/db.sqlite3"\)~#\1~' "$APP_DIR/.env"
 
-
-        # Add the MySQL connection string
-        #echo -e '\nSQLALCHEMY_DATABASE_URL = "mysql+pymysql://marzban:password@127.0.0.1:3306/marzban"' >> "$APP_DIR/.env"
-
         sed -i 's/^# \(XRAY_JSON = .*\)$/\1/' "$APP_DIR/.env"
         sed -i 's~\(XRAY_JSON = \).*~\1"/var/lib/marzban/xray_config.json"~' "$APP_DIR/.env"
-
 
         prompt_for_marzban_password
         MYSQL_ROOT_PASSWORD=$(tr -dc 'A-Za-z0-9' </dev/urandom | head -c 20)
@@ -905,18 +896,20 @@ EOF
         echo "----------------------------"
         colorized_echo red "Using SQLite as database"
         echo "----------------------------"
-        colorized_echo blue "Fetching compose file"
-        curl -sL "$FILES_URL_PREFIX/docker-compose.yml" -o "$docker_file_path"
-
-        # Install requested version
-        if [ "$marzban_version" == "latest" ]; then
-            yq -i '.services.marzban.image = "naymintun800/marzban:latest"' "$docker_file_path"
-        else
-            yq -i ".services.marzban.image = \"naymintun800/marzban:${marzban_version}\"" "$docker_file_path"
-        fi
-        echo "Installing $marzban_version version"
+        # Use our custom docker-compose.yml for SQLite
+        cat > "$docker_file_path" <<EOF
+services:
+  marzban:
+    image: naymintun800/marzban:${marzban_version}
+    restart: always
+    env_file: .env
+    network_mode: host
+    volumes:
+      - /var/lib/marzban:/var/lib/marzban
+      - ./:/code
+    command: bash -c "alembic upgrade head && python3 main.py"
+EOF
         colorized_echo green "File saved in $APP_DIR/docker-compose.yml"
-
 
         colorized_echo blue "Fetching .env file"
         curl -sL "$FILES_URL_PREFIX/.env.example" -o "$APP_DIR/.env"
@@ -925,11 +918,6 @@ EOF
         sed -i 's/^# \(SQLALCHEMY_DATABASE_URL = .*\)$/\1/' "$APP_DIR/.env"
         sed -i 's~\(XRAY_JSON = \).*~\1"/var/lib/marzban/xray_config.json"~' "$APP_DIR/.env"
         sed -i 's~\(SQLALCHEMY_DATABASE_URL = \).*~\1"sqlite:////var/lib/marzban/db.sqlite3"~' "$APP_DIR/.env"
-
-
-
-
-
         
         colorized_echo green "File saved in $APP_DIR/.env"
     fi

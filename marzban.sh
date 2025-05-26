@@ -715,10 +715,6 @@ install_marzban() {
     mkdir -p "$DATA_DIR"
     mkdir -p "$APP_DIR"
     
-    # Create migrations directory structure
-    mkdir -p "$APP_DIR/app/db/migrations"
-    mkdir -p "$APP_DIR/app/db/migrations/versions"
-    
     colorized_echo blue "Setting up docker-compose.yml"
     docker_file_path="$APP_DIR/docker-compose.yml"
     
@@ -933,10 +929,6 @@ EOF
     colorized_echo blue "Fetching alembic.ini file"
     curl -sL "$FILES_URL_PREFIX/alembic.ini" -o "$APP_DIR/alembic.ini"
     colorized_echo green "File saved in $APP_DIR/alembic.ini"
-    
-    # Create migrations directory structure
-    mkdir -p "$APP_DIR/app/db/migrations"
-    mkdir -p "$APP_DIR/app/db/migrations/versions"
     
     colorized_echo green "Marzban's files downloaded successfully"
 }

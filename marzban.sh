@@ -925,6 +925,10 @@ EOF
     colorized_echo blue "Fetching xray config file"
     curl -sL "$FILES_URL_PREFIX/xray_config.json" -o "$DATA_DIR/xray_config.json"
     colorized_echo green "File saved in $DATA_DIR/xray_config.json"
+
+    colorized_echo blue "Fetching alembic.ini file"
+    curl -sL "$FILES_URL_PREFIX/alembic.ini" -o "$APP_DIR/alembic.ini"
+    colorized_echo green "File saved in $APP_DIR/alembic.ini"
     
     colorized_echo green "Marzban's files downloaded successfully"
 }

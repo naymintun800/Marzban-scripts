@@ -729,8 +729,7 @@ services:
     network_mode: host
     volumes:
       - /var/lib/marzban:/var/lib/marzban
-      - ./:/code
-    command: bash -c "alembic upgrade head && python3 main.py"
+      - /var/lib/marzban/logs:/var/lib/marzban-node
     depends_on:
       mariadb:
         condition: service_healthy
@@ -816,8 +815,7 @@ services:
     network_mode: host
     volumes:
       - /var/lib/marzban:/var/lib/marzban
-      - ./:/code
-    command: bash -c "alembic upgrade head && python3 main.py"
+    command: bash -c "mkdir -p /code/app/db/migrations/versions && alembic init -t async /code/app/db/migrations && alembic upgrade head && python3 main.py"
     depends_on:
       mysql:
         condition: service_healthy
@@ -906,8 +904,7 @@ services:
     network_mode: host
     volumes:
       - /var/lib/marzban:/var/lib/marzban
-      - ./:/code
-    command: bash -c "alembic upgrade head && python3 main.py"
+    command: bash -c "mkdir -p /code/app/db/migrations/versions && alembic init -t async /code/app/db/migrations && alembic upgrade head && python3 main.py"
 EOF
         colorized_echo green "File saved in $APP_DIR/docker-compose.yml"
 

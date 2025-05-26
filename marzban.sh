@@ -904,7 +904,7 @@ services:
     network_mode: host
     volumes:
       - /var/lib/marzban:/var/lib/marzban
-    command: bash -c "mkdir -p /code/app/db/migrations/versions && alembic init -t async /code/app/db/migrations && alembic upgrade head && python3 main.py"
+      - /var/lib/marzban/logs:/var/lib/marzban-node
 EOF
         colorized_echo green "File saved in $APP_DIR/docker-compose.yml"
 

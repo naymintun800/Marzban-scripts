@@ -221,6 +221,78 @@ is_port_occupied() {
     fi
 }
 
+configure_haproxy() {
+    colorized_echo blue "Configuring HAProxy for Reality traffic..."
+    
+    mkdir -p /etc/haproxy
+    # Create or modify haproxy.cfg without overwriting existing config
+    if [ ! -f /etc/haproxy/haproxy.cfg ]; then
+        # Create new file if it doesn't exist
+        cat > /etc/haproxy/haproxy.cfg <<EOF
+global
+    log /dev/log local0
+    log /dev/log local1 notice
+    chroot /var/lib/haproxy
+    stats socket /run/haproxy/admin.sock mode 660 level admin
+    stats timeout 30s
+    user haproxy
+    group haproxy
+    daemon
+
+defaults
+    log global
+    mode tcp
+    option dontlognull
+    timeout connect 5000
+    timeout client 50000
+    timeout server 50000
+
+# Marzban Node Configuration (Reality)
+listen front
+    mode tcp
+    bind *:443
+
+    tcp-request inspect-delay 5s
+    tcp-request content accept if { req_ssl_hello_type 1 }
+    
+    default_backend reality
+
+backend reality
+    mode tcp
+    server srv1 127.0.0.1:12000
+EOF
+    else
+        # Append Marzban config to existing file if not already present
+        if ! grep -q "backend reality" /etc/haproxy/haproxy.cfg; then
+            cat >> /etc/haproxy/haproxy.cfg <<EOF
+
+# Marzban Node Configuration (Reality)
+listen front
+    mode tcp
+    bind *:443
+
+    tcp-request inspect-delay 5s
+    tcp-request content accept if { req_ssl_hello_type 1 }
+    
+    default_backend reality
+
+backend reality
+    mode tcp
+    server srv1 127.0.0.1:12000
+EOF
+        fi
+    fi
+    
+    # Install HAProxy if not installed
+    if ! command -v haproxy &>/dev/null; then
+        install_package haproxy
+    fi
+    
+    # Restart services
+    systemctl restart haproxy
+    $APP_NAME restart
+}
+
 install_marzban_node() {
     # Fetch releases
     mkdir -p "$DATA_DIR"
@@ -432,6 +504,11 @@ install_command() {
     up_marzban_node
     follow_marzban_node_logs
     echo "Use your IP: $NODE_IP and defaults ports: $SERVICE_PORT and $XRAY_API_PORT to setup your Marzban Main Panel"
+
+    # Configure HAProxy for Ubuntu systems
+    if [[ "$OS" == "Ubuntu"* ]]; then
+        configure_haproxy
+    fi
 }
 
 uninstall_command() {

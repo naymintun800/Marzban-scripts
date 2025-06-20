@@ -761,11 +761,13 @@ configure_env_ssl() {
     
     # Update or add SSL-related environment variables
     sed -i '/^UVICORN_PORT=/d' "$ENV_FILE"
+    sed -i '/^UVICORN_HOST=/d' "$ENV_FILE"
     sed -i '/^UVICORN_SSL_CERTFILE=/d' "$ENV_FILE"
     sed -i '/^UVICORN_SSL_KEYFILE=/d' "$ENV_FILE"
     sed -i '/^XRAY_SUBSCRIPTION_URL_PREFIX=/d' "$ENV_FILE"
     
-    echo "UVICORN_PORT=443" >> "$ENV_FILE"
+    echo "UVICORN_PORT=10000" >> "$ENV_FILE"
+    echo "UVICORN_HOST=\"127.0.0.1\"" >> "$ENV_FILE"
     echo "UVICORN_SSL_CERTFILE=\"/var/lib/marzban/certs/$DOMAIN.cer\"" >> "$ENV_FILE"
     echo "UVICORN_SSL_KEYFILE=\"/var/lib/marzban/certs/$DOMAIN.cer.key\"" >> "$ENV_FILE"
     echo "XRAY_SUBSCRIPTION_URL_PREFIX=https://$DOMAIN" >> "$ENV_FILE"
@@ -775,7 +777,30 @@ configure_haproxy() {
     colorized_echo blue "Configuring HAProxy..."
     
     mkdir -p /etc/haproxy
-    cat > /etc/haproxy/haproxy.cfg <<EOF
+    # Create or modify haproxy.cfg without overwriting existing config
+    if [ ! -f /etc/haproxy/haproxy.cfg ]; then
+        # Create new file if it doesn't exist
+        cat > /etc/haproxy/haproxy.cfg <<EOF
+global
+    log /dev/log local0
+    log /dev/log local1 notice
+    chroot /var/lib/haproxy
+    stats socket /run/haproxy/admin.sock mode 660 level admin
+    stats timeout 30s
+    user haproxy
+    group haproxy
+    daemon
+
+defaults
+    log global
+    mode http
+    option httplog
+    option dontlognull
+    timeout connect 5000
+    timeout client 50000
+    timeout server 50000
+
+# Marzban Configuration
 listen front
     mode tcp
     bind *:443
@@ -795,6 +820,33 @@ backend fallback
     mode tcp
     server srv1 127.0.0.1:11000
 EOF
+    else
+        # Append Marzban config to existing file if not already present
+        if ! grep -q "backend panel" /etc/haproxy/haproxy.cfg; then
+            cat >> /etc/haproxy/haproxy.cfg <<EOF
+
+# Marzban Configuration
+listen front
+    mode tcp
+    bind *:443
+
+    tcp-request inspect-delay 5s
+    tcp-request content accept if { req_ssl_hello_type 1 }
+
+    use_backend panel if { req.ssl_sni -m end $DOMAIN }
+
+    default_backend fallback
+
+backend panel
+    mode tcp
+    server srv1 127.0.0.1:10000
+
+backend fallback
+    mode tcp
+    server srv1 127.0.0.1:11000
+EOF
+        fi
+    fi
 }
 
 configure_ufw() {
@@ -1032,17 +1084,106 @@ EOF
         colorized_echo blue "Fetching .env file"
         curl -sL "$FILES_URL_PREFIX/.env.example" -o "$APP_DIR/.env"
 
-        sed -i 's/^# \(XRAY_JSON = .*\)$/\1/' "$APP_DIR/.env"
-        sed -i 's/^# \(SQLALCHEMY_DATABASE_URL = .*\)$/\1/' "$APP_DIR/.env"
-        sed -i 's~\(XRAY_JSON = \).*~\1"/var/lib/marzban/xray_config.json"~' "$APP_DIR/.env"
-        sed -i 's~\(SQLALCHEMY_DATABASE_URL = \).*~\1"sqlite:////var/lib/marzban/db.sqlite3"~' "$APP_DIR/.env"
+        # Force SQLite database path
+        sed -i '/^#*SQLALCHEMY_DATABASE_URL/d' "$APP_DIR/.env"
+        echo 'SQLALCHEMY_DATABASE_URL = "sqlite:////var/lib/marzban/db.sqlite3"' >> "$APP_DIR/.env"
+        
+        # Set Xray config path
+        sed -i '/^#*XRAY_JSON/d' "$APP_DIR/.env"
+        echo 'XRAY_JSON = "/var/lib/marzban/xray_config.json"' >> "$APP_DIR/.env"
         
         colorized_echo green "File saved in $APP_DIR/.env"
     fi
     
-    colorized_echo blue "Fetching xray config file"
-    curl -sL "$FILES_URL_PREFIX/xray_config.json" -o "$DATA_DIR/xray_config.json"
-    colorized_echo green "File saved in $DATA_DIR/xray_config.json"
+    colorized_echo blue "Creating xray config file"
+    cat > "$DATA_DIR/xray_config.json" <<EOF
+{
+  "log": {
+    "loglevel": "warning"
+  },
+  "dns": {
+    "servers": [
+      "1.1.1.1"
+    ],
+    "queryStrategy": "UseIPv4"
+  },
+  "routing": {
+    "rules": [
+      {
+        "protocol": [
+          "bittorent"
+        ],
+        "ip": [
+          "geoip:private"
+        ],
+        "outboundTag": "BLOCK",
+        "type": "field"
+      }
+    ]
+  },
+  "inbounds": [
+    {
+      "tag": "Shadowsocks TCP",
+      "listen": "0.0.0.0",
+      "port": 1080,
+      "protocol": "shadowsocks",
+      "settings": {
+        "clients": [],
+        "network": "tcp,udp"
+      }
+    },
+    {
+      "tag": "VLESS TCP REALITY",
+      "listen": "127.0.0.1",
+      "port": 12000,
+      "protocol": "vless",
+      "settings": {
+        "clients": [],
+        "decryption": "none",
+        "flow": "xtls-rprx-vision"
+      },
+      "streamSettings": {
+        "network": "tcp",
+        "tcpSettings": {
+          "acceptProxyProtocol": true
+        },
+        "security": "reality",
+        "realitySettings": {
+          "show": false,
+          "dest": "gmail.com:443",
+          "xver": 0,
+          "serverNames": [
+            "gmail.com"
+          ],
+          "privateKey": "$(docker exec marzban-marzban-1 xray x25519 | awk '/Private key:/ {print $3}')",
+          "SpiderX": "",
+          "shortIds": [
+            ""
+          ]
+        }
+      },
+      "sniffing": {
+        "enabled": true,
+        "destOverride": [
+          "http",
+          "tls"
+        ]
+      }
+    }
+  ],
+  "outbounds": [
+    {
+      "protocol": "freedom",
+      "tag": "DIRECT"
+    },
+    {
+      "protocol": "blackhole",
+      "tag": "BLOCK"
+    }
+  ]
+}
+EOF
+    colorized_echo green "Xray config created at $DATA_DIR/xray_config.json with generated private key"
 
     colorized_echo blue "Fetching alembic.ini file"
     curl -sL "$FILES_URL_PREFIX/alembic.ini" -o "$APP_DIR/alembic.ini"

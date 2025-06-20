@@ -706,6 +706,129 @@ update_core_command() {
     colorized_echo blue "Installation of Xray-core version $selected_version completed."
 }
 
+prompt_for_domains() {
+    colorized_echo blue "====================================="
+    colorized_echo blue "      SSL Certificate Setup"
+    colorized_echo blue "====================================="
+    
+    while true; do
+        read -p "Enter domain(s) for SSL certificate (comma separated for multiple domains/subdomains): " domains
+        if [[ -n "$domains" ]]; then
+            IFS=',' read -ra DOMAIN_ARRAY <<< "$domains"
+            DOMAIN="${DOMAIN_ARRAY[0]}"  # First domain is primary
+            break
+        else
+            colorized_echo red "Domain cannot be empty. Please try again."
+        fi
+    done
+}
+
+install_ssl_dependencies() {
+    colorized_echo blue "Installing SSL dependencies..."
+    install_package haproxy
+    install_package socat
+    
+    # Install acme.sh if not already installed
+    if [ ! -f ~/.acme.sh/acme.sh ]; then
+        curl https://get.acme.sh | sh -s email=admin@$DOMAIN
+        source ~/.bashrc
+    fi
+}
+
+generate_ssl_certs() {
+    colorized_echo blue "Generating SSL certificates for $DOMAIN..."
+    mkdir -p /var/lib/marzban/certs
+    
+    if [ ${#DOMAIN_ARRAY[@]} -gt 1 ]; then
+        # Multiple domains - use SAN certificate
+        colorized_echo blue "Generating SAN certificate for multiple domains..."
+        ~/.acme.sh/acme.sh --issue --standalone -d "$DOMAIN" ${DOMAIN_ARRAY[@]/#/-d } \
+            --fullchain-file "/var/lib/marzban/certs/$DOMAIN.cer" \
+            --key-file "/var/lib/marzban/certs/$DOMAIN.cer.key"
+    else
+        # Single domain
+        ~/.acme.sh/acme.sh --issue --standalone -d "$DOMAIN" \
+            --fullchain-file "/var/lib/marzban/certs/$DOMAIN.cer" \
+            --key-file "/var/lib/marzban/certs/$DOMAIN.cer.key"
+    fi
+    
+    # Set proper permissions
+    chmod 600 /var/lib/marzban/certs/*
+}
+
+configure_env_ssl() {
+    colorized_echo blue "Configuring SSL in Marzban environment..."
+    
+    # Update or add SSL-related environment variables
+    sed -i '/^UVICORN_PORT=/d' "$ENV_FILE"
+    sed -i '/^UVICORN_SSL_CERTFILE=/d' "$ENV_FILE"
+    sed -i '/^UVICORN_SSL_KEYFILE=/d' "$ENV_FILE"
+    sed -i '/^XRAY_SUBSCRIPTION_URL_PREFIX=/d' "$ENV_FILE"
+    
+    echo "UVICORN_PORT=443" >> "$ENV_FILE"
+    echo "UVICORN_SSL_CERTFILE=\"/var/lib/marzban/certs/$DOMAIN.cer\"" >> "$ENV_FILE"
+    echo "UVICORN_SSL_KEYFILE=\"/var/lib/marzban/certs/$DOMAIN.cer.key\"" >> "$ENV_FILE"
+    echo "XRAY_SUBSCRIPTION_URL_PREFIX=https://$DOMAIN" >> "$ENV_FILE"
+}
+
+configure_haproxy() {
+    colorized_echo blue "Configuring HAProxy..."
+    
+    mkdir -p /etc/haproxy
+    cat > /etc/haproxy/haproxy.cfg <<EOF
+listen front
+    mode tcp
+    bind *:443
+
+    tcp-request inspect-delay 5s
+    tcp-request content accept if { req_ssl_hello_type 1 }
+
+    use_backend panel if { req.ssl_sni -m end $DOMAIN }
+
+    default_backend fallback
+
+backend panel
+    mode tcp
+    server srv1 127.0.0.1:10000
+
+backend fallback
+    mode tcp
+    server srv1 127.0.0.1:11000
+EOF
+}
+
+configure_ufw() {
+    colorized_echo blue "Configuring UFW firewall..."
+    
+    if ! command -v ufw >/dev/null 2>&1; then
+        colorized_echo yellow "UFW not installed, skipping firewall configuration"
+        return
+    fi
+    
+    if ! ufw status | grep -q "Status: active"; then
+        colorized_echo yellow "UFW is not active, skipping firewall configuration"
+        return
+    fi
+    
+    ufw allow 80/tcp    # For Let's Encrypt validation
+    ufw allow 443/tcp   # Main HTTPS access
+    
+    colorized_echo green "UFW configured to allow HTTP/HTTPS traffic"
+}
+
+restart_services() {
+    colorized_echo blue "Restarting services..."
+    
+    systemctl restart haproxy
+    marzban restart
+    
+    colorized_echo green "Services restarted successfully"
+    
+    # Create admin account
+    colorized_echo blue "Creating admin account..."
+    marzban cli admin create --sudo
+}
+
 install_marzban() {
     local marzban_version=$1
     local database_type=$2
@@ -926,6 +1049,17 @@ EOF
     colorized_echo green "File saved in $APP_DIR/alembic.ini"
     
     colorized_echo green "Marzban's files downloaded successfully"
+    
+    # Only setup SSL and HAProxy on Ubuntu
+    if [[ "$OS" == "Ubuntu"* ]]; then
+        prompt_for_domains
+        install_ssl_dependencies
+        generate_ssl_certs
+        configure_env_ssl
+        configure_haproxy
+        configure_ufw
+        restart_services
+    fi
 }
 
 up_marzban() {

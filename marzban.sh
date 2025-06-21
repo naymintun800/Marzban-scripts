@@ -34,6 +34,22 @@ colorized_echo() {
     esac
 }
 
+update_env_var() {
+    local key=$1
+    local value=$2
+    local env_file=$3
+
+    # Check if the key exists (commented or uncommented, with optional spaces)
+    if grep -q -E "^#?\s*${key}\s*=" "$env_file"; then
+        # If it exists, update the line, removing any comment.
+        # Using | as a delimiter to avoid issues with slashes in paths.
+        sed -i -E "s|^#?\s*${key}\s*=.*|${key} = ${value}|" "$env_file"
+    else
+        # If it doesn't exist, append it to the file
+        echo "${key} = ${value}" >> "$env_file"
+    fi
+}
+
 check_running_as_root() {
     if [ "$(id -u)" != "0" ]; then
         colorized_echo red "This command must be run as root."
@@ -772,19 +788,12 @@ generate_ssl_certs() {
 
 configure_env_ssl() {
     colorized_echo blue "Configuring SSL in Marzban environment..."
-    
-    # Update or add SSL-related environment variables
-    sed -i '/^UVICORN_PORT=/d' "$ENV_FILE"
-    sed -i '/^UVICORN_HOST=/d' "$ENV_FILE"
-    sed -i '/^UVICORN_SSL_CERTFILE=/d' "$ENV_FILE"
-    sed -i '/^UVICORN_SSL_KEYFILE=/d' "$ENV_FILE"
-    sed -i '/^XRAY_SUBSCRIPTION_URL_PREFIX=/d' "$ENV_FILE"
-    
-    echo "UVICORN_PORT=10000" >> "$ENV_FILE"
-    echo "UVICORN_HOST=\"127.0.0.1\"" >> "$ENV_FILE"
-    echo "UVICORN_SSL_CERTFILE=\"/var/lib/marzban/certs/$DOMAIN.cer\"" >> "$ENV_FILE"
-    echo "UVICORN_SSL_KEYFILE=\"/var/lib/marzban/certs/$DOMAIN.cer.key\"" >> "$ENV_FILE"
-    echo "XRAY_SUBSCRIPTION_URL_PREFIX=https://$DOMAIN" >> "$ENV_FILE"
+
+    update_env_var "UVICORN_PORT" "10000" "$ENV_FILE"
+    update_env_var "UVICORN_HOST" '"127.0.0.1"' "$ENV_FILE"
+    update_env_var "UVICORN_SSL_CERTFILE" "\"/var/lib/marzban/certs/$DOMAIN.cer\"" "$ENV_FILE"
+    update_env_var "UVICORN_SSL_KEYFILE" "\"/var/lib/marzban/certs/$DOMAIN.cer.key\"" "$ENV_FILE"
+    update_env_var "XRAY_SUBSCRIPTION_URL_PREFIX" "https://$DOMAIN" "$ENV_FILE"
 }
 
 configure_haproxy() {

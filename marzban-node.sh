@@ -515,14 +515,15 @@ install_command() {
     detect_compose
     install_marzban_node_script
     install_marzban_node
-    up_marzban_node
-    follow_marzban_node_logs
-    echo "Use your IP: $NODE_IP and defaults ports: $SERVICE_PORT and $XRAY_API_PORT to setup your Marzban Main Panel"
 
-    # Configure HAProxy for Ubuntu systems
+    # Configure HAProxy for Ubuntu systems before starting the node
     if [[ "$OS" == "Ubuntu"* ]]; then
         configure_haproxy
     fi
+
+    up_marzban_node
+    follow_marzban_node_logs
+    echo "Use your IP: $NODE_IP and defaults ports: $SERVICE_PORT and $XRAY_API_PORT to setup your Marzban Main Panel"
 }
 
 uninstall_command() {

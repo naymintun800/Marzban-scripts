@@ -895,13 +895,9 @@ restart_services() {
     colorized_echo blue "Restarting services..."
     
     systemctl restart haproxy
-    marzban restart
+    marzban restart -n
     
     colorized_echo green "Services restarted successfully"
-    
-    # Create admin account
-    colorized_echo blue "Creating admin account..."
-    marzban cli admin create --sudo
 }
 
 install_marzban() {
@@ -1108,13 +1104,9 @@ EOF
         colorized_echo blue "Fetching .env file"
         curl -sL "$FILES_URL_PREFIX/.env.example" -o "$APP_DIR/.env"
 
-        # Force SQLite database path
-        sed -i '/^#*SQLALCHEMY_DATABASE_URL/d' "$APP_DIR/.env"
-        echo 'SQLALCHEMY_DATABASE_URL = "sqlite:////var/lib/marzban/db.sqlite3"' >> "$APP_DIR/.env"
-        
-        # Set Xray config path
-        sed -i '/^#*XRAY_JSON/d' "$APP_DIR/.env"
-        echo 'XRAY_JSON = "/var/lib/marzban/xray_config.json"' >> "$APP_DIR/.env"
+        # Update SQLite database path and Xray config path using the proper function
+        update_env_var "SQLALCHEMY_DATABASE_URL" '"sqlite:////var/lib/marzban/db.sqlite3"' "$APP_DIR/.env"
+        update_env_var "XRAY_JSON" '"/var/lib/marzban/xray_config.json"' "$APP_DIR/.env"
         
         colorized_echo green "File saved in $APP_DIR/.env"
     fi
@@ -1434,6 +1426,15 @@ install_command() {
         exit 1
     fi
     up_marzban
+
+    colorized_echo blue "Waiting for services to initialize (15 seconds)..."
+    sleep 15
+
+    colorized_echo blue "Creating initial admin account..."
+    marzban cli admin create --sudo
+
+    colorized_echo green "Installation complete! You can now access the panel."
+    colorized_echo green "Following logs... (Press Ctrl+C to exit)"
     follow_marzban_logs
 }
 

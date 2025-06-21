@@ -738,18 +738,26 @@ generate_ssl_certs() {
     colorized_echo blue "Generating SSL certificates for $DOMAIN..."
     mkdir -p /var/lib/marzban/certs
     
+    local acme_cmd
     if [ ${#DOMAIN_ARRAY[@]} -gt 1 ]; then
         # Multiple domains - use SAN certificate
         colorized_echo blue "Generating SAN certificate for multiple domains..."
-        ~/.acme.sh/acme.sh --issue --standalone -d "$DOMAIN" ${DOMAIN_ARRAY[@]/#/-d } \
-            --fullchain-file "/var/lib/marzban/certs/$DOMAIN.cer" \
-            --key-file "/var/lib/marzban/certs/$DOMAIN.cer.key"
+        acme_cmd="~/.acme.sh/acme.sh --issue --standalone -d \"$DOMAIN\" ${DOMAIN_ARRAY[@]/#/-d } --fullchain-file \"/var/lib/marzban/certs/$DOMAIN.cer\" --key-file \"/var/lib/marzban/certs/$DOMAIN.cer.key\""
     else
         # Single domain
-        ~/.acme.sh/acme.sh --issue --standalone -d "$DOMAIN" \
-            --fullchain-file "/var/lib/marzban/certs/$DOMAIN.cer" \
-            --key-file "/var/lib/marzban/certs/$DOMAIN.cer.key"
+        acme_cmd="~/.acme.sh/acme.sh --issue --standalone -d \"$DOMAIN\" --fullchain-file \"/var/lib/marzban/certs/$DOMAIN.cer\" --key-file \"/var/lib/marzban/certs/$DOMAIN.cer.key\""
     fi
+
+    # Execute acme.sh and handle its exit code.
+    # It returns 0 on success, 2 if the cert is still valid (skipped).
+    # We should only exit on other non-zero codes.
+    eval "$acme_cmd" || {
+        local exit_code=$?
+        if [ $exit_code -ne 2 ]; then
+            colorized_echo red "acme.sh failed with exit code $exit_code"
+            exit $exit_code
+        fi
+    }
     
     # Set proper permissions
     chmod 600 /var/lib/marzban/certs/*

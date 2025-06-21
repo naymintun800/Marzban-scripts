@@ -739,6 +739,14 @@ generate_ssl_certs() {
         acme_args+=("-d" "$d")
     done
     
+    # Remove existing certs for the domains to avoid conflicts
+    colorized_echo yellow "Checking for and removing existing certificates to prevent conflicts..."
+    for d in "${DOMAIN_ARRAY[@]}"; do
+        if [ -f "$HOME/.acme.sh/acme.sh" ]; then
+            "$HOME/.acme.sh/acme.sh" --remove -d "$d" --ecc >/dev/null 2>&1 || true
+        fi
+    done
+
     colorized_echo blue "Issuing certificate..."
     if ! "$HOME/.acme.sh/acme.sh" --issue --standalone "${acme_args[@]}"; then
         local exit_code=$?
@@ -888,6 +896,7 @@ restart_services() {
 install_marzban() {
     local marzban_version=$1
     local database_type=$2
+    local domains_arg=$3
     # Fetch releases
     FILES_URL_PREFIX="https://raw.githubusercontent.com/naymintun800/Marzban/master"
     
@@ -1234,7 +1243,13 @@ EOF
     
     # Only setup SSL and HAProxy on Ubuntu
     if [[ "$OS" == "Ubuntu"* ]]; then
-        prompt_for_domains
+        if [ -n "$domains_arg" ]; then
+            domains="$domains_arg"
+            IFS=',' read -ra DOMAIN_ARRAY <<< "$domains"
+            DOMAIN="${DOMAIN_ARRAY[0]}"
+        else
+            prompt_for_domains
+        fi
         install_ssl_dependencies
         generate_ssl_certs
         configure_env_ssl
@@ -1314,10 +1329,15 @@ install_command() {
     database_type="sqlite"
     marzban_version="latest"
     marzban_version_set="false"
+    local domains=""
 
     # Parse options
     while [[ $# -gt 0 ]]; do
         case "$1" in
+            --domain)
+                domains="$2"
+                shift 2
+            ;;
             --database)
                 database_type="$2"
                 shift 2
@@ -1392,7 +1412,7 @@ install_command() {
     # Check if the version is valid and exists
     if [[ "$marzban_version" == "latest" || "$marzban_version" == "dev" || "$marzban_version" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
         if check_version_exists "$marzban_version"; then
-            install_marzban "$marzban_version" "$database_type"
+            install_marzban "$marzban_version" "$database_type" "$domains"
             echo "Installing $marzban_version version"
         else
             echo "Version $marzban_version does not exist. Please enter a valid version (e.g. v0.5.2)"

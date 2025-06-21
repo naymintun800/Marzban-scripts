@@ -734,27 +734,27 @@ generate_ssl_certs() {
     colorized_echo blue "Generating SSL certificates for $DOMAIN..."
     mkdir -p /var/lib/marzban/certs
     
-    local domains_param=""
+    local acme_args=()
     for d in "${DOMAIN_ARRAY[@]}"; do
-        domains_param+=" -d \"$d\""
+        acme_args+=("-d" "$d")
     done
     
     colorized_echo blue "Issuing certificate..."
-    "$HOME/.acme.sh/acme.sh" --issue --standalone $domains_param || {
+    if ! "$HOME/.acme.sh/acme.sh" --issue --standalone "${acme_args[@]}"; then
         local exit_code=$?
         if [ $exit_code -ne 2 ]; then
             colorized_echo red "acme.sh --issue failed with exit code $exit_code"
             exit $exit_code
         fi
-    }
+    fi
 
     colorized_echo blue "Installing certificate..."
-    "$HOME/.acme.sh/acme.sh" --install-cert $domains_param \
+    if ! "$HOME/.acme.sh/acme.sh" --install-cert "${acme_args[@]}" \
         --fullchain-file "/var/lib/marzban/certs/$DOMAIN.cer" \
-        --key-file "/var/lib/marzban/certs/$DOMAIN.cer.key" || {
+        --key-file "/var/lib/marzban/certs/$DOMAIN.cer.key"; then
         colorized_echo red "acme.sh --install-cert failed"
         exit 1
-    }
+    fi
     
     # Set proper permissions
     chmod 600 /var/lib/marzban/certs/*
@@ -1895,9 +1895,7 @@ esac
 
 </final_file_content>
 
-Now that you have the latest state of the file, try the operation again with fewer, more precise SEARCH blocks. For large files especially, it may be prudent to try to limit yourself to <5 SEARCH/REPLACE blocks at a time, then wait for the user to respond with the result of the operation before following up with another replace_in_file call to make additional edits.
-(If you run into this error 3 times in a row, you may use the write_to_file tool as a fallback.)
-</error><environment_details>
+IMPORTANT: For any future changes to this file, use the final_file_content shown above as your reference. This content reflects the current state of the file, including any auto-formatting (e.g., if you used single quotes but the formatter converted them to double quotes). Always base your SEARCH/REPLACE operations on this final version to ensure accuracy.<environment_details>
 # VSCode Visible Files
 marzban.sh
 
@@ -1906,10 +1904,10 @@ marzban-node.sh
 marzban.sh
 
 # Current Time
-6/21/2025, 7:01:00 PM (Asia/Rangoon, UTC+6.5:00)
+6/21/2025, 7:16:06 PM (Asia/Rangoon, UTC+6.5:00)
 
 # Context Window Usage
-258,307 / 1,048.576K tokens used (25%)
+531,090 / 1,048.576K tokens used (51%)
 
 # Current Mode
 ACT MODE

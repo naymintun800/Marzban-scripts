@@ -255,11 +255,17 @@ listen front
     tcp-request inspect-delay 5s
     tcp-request content accept if { req_ssl_hello_type 1 }
     
-    default_backend reality
+    use_backend reality if { req.ssl_sni -m end gmail.com }
+    default_backend fallback
+
+backend fallback
+    mode tcp
+    server srv1 127.0.0.1:11000
 
 backend reality
     mode tcp
-    server srv1 127.0.0.1:12000
+    balance leastconn
+    server srv1 127.0.0.1:12000 send-proxy
 EOF
     else
         # Append Marzban config to existing file if not already present
@@ -274,11 +280,17 @@ listen front
     tcp-request inspect-delay 5s
     tcp-request content accept if { req_ssl_hello_type 1 }
     
-    default_backend reality
+    use_backend reality if { req.ssl_sni -m end gmail.com }
+    default_backend fallback
+
+backend fallback
+    mode tcp
+    server srv1 127.0.0.1:11000
 
 backend reality
     mode tcp
-    server srv1 127.0.0.1:12000
+    balance leastconn
+    server srv1 127.0.0.1:12000 send-proxy
 EOF
         fi
     fi
@@ -290,7 +302,9 @@ EOF
     
     # Restart services
     systemctl restart haproxy
-    $APP_NAME restart
+    if is_marzban_node_up; then
+        $APP_NAME restart
+    fi
 }
 
 install_marzban_node() {

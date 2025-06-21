@@ -42,7 +42,6 @@ check_running_as_root() {
 }
 
 detect_os() {
-    # Detect the operating system
     if [ -f /etc/lsb-release ]; then
         OS=$(lsb_release -si)
     elif [ -f /etc/os-release ]; then
@@ -1095,6 +1094,43 @@ EOF
         colorized_echo green "File saved in $APP_DIR/.env"
     fi
     
+    colorized_echo blue "Downloading latest Xray-core to generate keys"
+    identify_the_operating_system_and_architecture
+    if ! command -v wget >/dev/null 2>&1; then
+        install_package wget
+    fi
+    if ! command -v unzip >/dev/null 2>&1; then
+        install_package unzip
+    fi
+
+    local latest_version
+    latest_version=$(curl -s "https://api.github.com/repos/XTLS/Xray-core/releases/latest" | grep -oP '"tag_name": "\K(.*?)(?=")')
+    if [ -z "$latest_version" ]; then
+        colorized_echo red "Failed to fetch latest Xray-core version."
+        exit 1
+    fi
+
+    local xray_filename="Xray-linux-$ARCH.zip"
+    local xray_download_url="https://github.com/XTLS/Xray-core/releases/download/${latest_version}/${xray_filename}"
+    local xray_zip_path="/tmp/${xray_filename}"
+    local xray_core_dir="$DATA_DIR/xray-core"
+    
+    mkdir -p "$xray_core_dir"
+
+    colorized_echo blue "Downloading Xray-core version ${latest_version}..."
+    wget -q -O "${xray_zip_path}" "${xray_download_url}"
+
+    colorized_echo blue "Extracting Xray-core..."
+    unzip -o "${xray_zip_path}" -d "$xray_core_dir" >/dev/null 2>&1
+    rm "${xray_zip_path}"
+
+    local XRAY_PRIVATE_KEY
+    XRAY_PRIVATE_KEY=$("$xray_core_dir/xray" x25519 | awk '/Private key:/ {print $3}')
+    if [ -z "$XRAY_PRIVATE_KEY" ]; then
+        colorized_echo red "Failed to generate Xray private key."
+        exit 1
+    fi
+
     colorized_echo blue "Creating xray config file"
     cat > "$DATA_DIR/xray_config.json" <<EOF
 {
@@ -1155,7 +1191,7 @@ EOF
           "serverNames": [
             "gmail.com"
           ],
-          "privateKey": "$(docker exec marzban-marzban-1 xray x25519 | awk '/Private key:/ {print $3}')",
+          "privateKey": "$XRAY_PRIVATE_KEY",
           "SpiderX": "",
           "shortIds": [
             ""
@@ -1276,8 +1312,7 @@ install_command() {
 
     # Parse options
     while [[ $# -gt 0 ]]; do
-        key="$1"
-        case $key in
+        case "$1" in
             --database)
                 database_type="$2"
                 shift 2

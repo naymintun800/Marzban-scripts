@@ -748,8 +748,10 @@ generate_ssl_certs() {
     done
 
     colorized_echo blue "Issuing certificate..."
-    if ! "$HOME/.acme.sh/acme.sh" --issue --standalone "${acme_args[@]}"; then
+    # Use --force to overwrite existing domain keys and avoid interactive prompts.
+    if ! "$HOME/.acme.sh/acme.sh" --issue --standalone --force "${acme_args[@]}"; then
         local exit_code=$?
+        # Exit code 2 means the certificate is already issued and doesn't need renewal, which is not an error.
         if [ $exit_code -ne 2 ]; then
             colorized_echo red "acme.sh --issue failed with exit code $exit_code"
             exit $exit_code

@@ -10,6 +10,7 @@ DATA_DIR="/var/lib/$APP_NAME"
 COMPOSE_FILE="$APP_DIR/docker-compose.yml"
 ENV_FILE="$APP_DIR/.env"
 LAST_XRAY_CORES=10
+USE_WILDCARD=false
 
 colorized_echo() {
     local color=$1
@@ -721,7 +722,7 @@ prompt_for_domains() {
     colorized_echo blue "====================================="
     colorized_echo blue "      SSL Certificate Setup"
     colorized_echo blue "====================================="
-    
+
     while true; do
         read -p "Enter domain(s) for SSL certificate (comma separated for multiple domains/subdomains): " domains
         if [[ -n "$domains" ]]; then
@@ -732,6 +733,97 @@ prompt_for_domains() {
             colorized_echo red "Domain cannot be empty. Please try again."
         fi
     done
+
+    # Ask if user wants wildcard SSL
+    colorized_echo blue "====================================="
+    colorized_echo blue "      Wildcard SSL Option"
+    colorized_echo blue "====================================="
+    colorized_echo yellow "Do you want to generate a wildcard+SAN SSL certificate?"
+    colorized_echo cyan "Wildcard+SAN certificate covers ALL domains you entered AND all their subdomains."
+    colorized_echo cyan "Example: If you entered 'sub.example.com,api.another.com', the certificate will cover:"
+    colorized_echo cyan "  • *.example.com, example.com (all subdomains + root of example.com)"
+    colorized_echo cyan "  • *.another.com, another.com (all subdomains + root of another.com)"
+    colorized_echo cyan "This requires Cloudflare DNS API credentials."
+    echo
+    while true; do
+        read -p "Generate wildcard SSL certificates? (y/n): " wildcard_choice
+        case $wildcard_choice in
+            [Yy]* )
+                USE_WILDCARD=true
+                prompt_for_cloudflare_credentials
+                break
+                ;;
+            [Nn]* )
+                USE_WILDCARD=false
+                colorized_echo green "Using standard SSL certificates with SAN for multiple domains."
+                break
+                ;;
+            * )
+                colorized_echo red "Please answer yes (y) or no (n)."
+                ;;
+        esac
+    done
+}
+
+prompt_for_cloudflare_credentials() {
+    colorized_echo blue "====================================="
+    colorized_echo blue "    Cloudflare DNS API Setup"
+    colorized_echo blue "====================================="
+    colorized_echo cyan "For wildcard SSL certificates, we need your Cloudflare API credentials."
+    colorized_echo cyan "You can get these from: https://dash.cloudflare.com/profile/api-tokens"
+    echo
+    colorized_echo yellow "Choose your authentication method:"
+    echo "1. API Token (Recommended - more secure)"
+    echo "2. Global API Key (Legacy method)"
+    echo
+
+    while true; do
+        read -p "Choose option (1 or 2): " cf_auth_choice
+        case $cf_auth_choice in
+            1)
+                colorized_echo green "Using API Token method"
+                while true; do
+                    read -p "Enter your Cloudflare API Token: " CF_Token
+                    if [[ -n "$CF_Token" ]]; then
+                        break
+                    else
+                        colorized_echo red "API Token cannot be empty. Please try again."
+                    fi
+                done
+                CF_ACCOUNT_ID=""
+                while true; do
+                    read -p "Enter your Cloudflare Account ID (optional, press Enter to skip): " CF_ACCOUNT_ID
+                    break
+                done
+                break
+                ;;
+            2)
+                colorized_echo yellow "Using Global API Key method"
+                while true; do
+                    read -p "Enter your Cloudflare email: " CF_Email
+                    if [[ -n "$CF_Email" ]]; then
+                        break
+                    else
+                        colorized_echo red "Email cannot be empty. Please try again."
+                    fi
+                done
+                while true; do
+                    read -p "Enter your Cloudflare Global API Key: " CF_Key
+                    if [[ -n "$CF_Key" ]]; then
+                        break
+                    else
+                        colorized_echo red "API Key cannot be empty. Please try again."
+                    fi
+                done
+                break
+                ;;
+            *)
+                colorized_echo red "Please choose 1 or 2."
+                ;;
+        esac
+    done
+
+    colorized_echo green "Cloudflare credentials configured successfully!"
 }
 
 install_ssl_dependencies() {
@@ -747,14 +839,26 @@ install_ssl_dependencies() {
 }
 
 generate_ssl_certs() {
-    colorized_echo blue "Generating SSL certificates for $DOMAIN..."
     mkdir -p /var/lib/marzban/certs
-    
+
+    if [ "$USE_WILDCARD" = true ]; then
+        generate_wildcard_ssl_certs
+    else
+        generate_standard_ssl_certs
+    fi
+
+    # Set proper permissions
+    chmod 600 /var/lib/marzban/certs/*
+}
+
+generate_standard_ssl_certs() {
+    colorized_echo blue "Generating standard SSL certificates for $DOMAIN..."
+
     local acme_args=()
     for d in "${DOMAIN_ARRAY[@]}"; do
         acme_args+=("-d" "$d")
     done
-    
+
     # Remove existing certs for the domains to avoid conflicts
     colorized_echo yellow "Checking for and removing existing certificates to prevent conflicts..."
     for d in "${DOMAIN_ARRAY[@]}"; do
@@ -781,9 +885,113 @@ generate_ssl_certs() {
         colorized_echo red "acme.sh --install-cert failed"
         exit 1
     fi
-    
-    # Set proper permissions
-    chmod 600 /var/lib/marzban/certs/*
+}
+
+generate_wildcard_ssl_certs() {
+    colorized_echo blue "Generating wildcard+SAN SSL certificate..."
+
+    # Set up Cloudflare credentials for acme.sh
+    if [[ -n "$CF_Token" ]]; then
+        export CF_Token="$CF_Token"
+        if [[ -n "$CF_ACCOUNT_ID" ]]; then
+            export CF_Account_ID="$CF_ACCOUNT_ID"
+        fi
+        colorized_echo green "Using Cloudflare API Token for DNS challenge"
+    elif [[ -n "$CF_Key" && -n "$CF_Email" ]]; then
+        export CF_Key="$CF_Key"
+        export CF_Email="$CF_Email"
+        colorized_echo green "Using Cloudflare Global API Key for DNS challenge"
+    else
+        colorized_echo red "Cloudflare credentials not properly configured"
+        exit 1
+    fi
+
+    # Extract unique root domains and build certificate arguments
+    local root_domains=()
+    local acme_args=()
+    local seen_domains=()
+
+    colorized_echo blue "Processing domains for wildcard+SAN certificate..."
+
+    for domain in "${DOMAIN_ARRAY[@]}"; do
+        # Extract root domain (remove any subdomain)
+        root_domain=$(echo "$domain" | awk -F. '{print $(NF-1)"."$NF}')
+
+        # Check if we've already processed this root domain
+        local already_seen=false
+        for seen in "${seen_domains[@]}"; do
+            if [[ "$seen" == "$root_domain" ]]; then
+                already_seen=true
+                break
+            fi
+        done
+
+        if [[ "$already_seen" == false ]]; then
+            seen_domains+=("$root_domain")
+            root_domains+=("$root_domain")
+            wildcard_domain="*.$root_domain"
+
+            # Add both wildcard and root domain to certificate
+            acme_args+=("-d" "$wildcard_domain")
+            acme_args+=("-d" "$root_domain")
+
+            colorized_echo cyan "  Added to certificate: $wildcard_domain (covers all subdomains)"
+            colorized_echo cyan "  Added to certificate: $root_domain (covers root domain)"
+        fi
+    done
+
+    # Use the first root domain as the primary domain for file naming
+    DOMAIN="${root_domains[0]}"
+
+    colorized_echo blue "Certificate will cover:"
+    for root_domain in "${root_domains[@]}"; do
+        colorized_echo green "  • *.$root_domain (wildcard for all subdomains)"
+        colorized_echo green "  • $root_domain (root domain)"
+    done
+
+    # Remove existing certificates to avoid conflicts
+    colorized_echo yellow "Removing any existing certificates to prevent conflicts..."
+    if [ -f "$HOME/.acme.sh/acme.sh" ]; then
+        for root_domain in "${root_domains[@]}"; do
+            "$HOME/.acme.sh/acme.sh" --remove -d "*.$root_domain" --ecc >/dev/null 2>&1 || true
+            "$HOME/.acme.sh/acme.sh" --remove -d "$root_domain" --ecc >/dev/null 2>&1 || true
+        done
+    fi
+
+    colorized_echo blue "Issuing single wildcard+SAN certificate for all domains..."
+    # Issue single certificate with all wildcard domains using Cloudflare DNS challenge
+    if ! "$HOME/.acme.sh/acme.sh" --issue --dns dns_cf --force "${acme_args[@]}"; then
+        local exit_code=$?
+        if [ $exit_code -ne 2 ]; then
+            colorized_echo red "Failed to issue wildcard+SAN certificate"
+            colorized_echo red "This might be due to:"
+            colorized_echo red "  • Invalid Cloudflare credentials"
+            colorized_echo red "  • Domains not managed by your Cloudflare account"
+            colorized_echo red "  • Rate limiting from Let's Encrypt"
+            exit $exit_code
+        fi
+    fi
+
+    # Install the certificate using the primary domain as filename
+    colorized_echo blue "Installing wildcard+SAN certificate..."
+    if ! "$HOME/.acme.sh/acme.sh" --install-cert -d "*.${DOMAIN}" \
+        --fullchain-file "/var/lib/marzban/certs/$DOMAIN.cer" \
+        --key-file "/var/lib/marzban/certs/$DOMAIN.cer.key"; then
+        colorized_echo red "Failed to install wildcard+SAN certificate"
+        exit 1
+    fi
+
+    colorized_echo green "====================================="
+    colorized_echo green "Wildcard+SAN certificate generated successfully!"
+    colorized_echo green "Single certificate covers:"
+    for root_domain in "${root_domains[@]}"; do
+        colorized_echo green "  ✓ *.$root_domain (all subdomains)"
+        colorized_echo green "  ✓ $root_domain (root domain)"
+    done
+    colorized_echo green "Certificate files:"
+    colorized_echo green "  • /var/lib/marzban/certs/$DOMAIN.cer"
+    colorized_echo green "  • /var/lib/marzban/certs/$DOMAIN.cer.key"
+    colorized_echo green "====================================="
 }
 
 configure_env_ssl() {
@@ -865,7 +1073,7 @@ backend panel
     server srv1 127.0.0.1:10000
 
 backend fallback
-    mode tcp
+    mode tcpcf_auth_choice
     server srv1 127.0.0.1:11000
 EOF
         fi
@@ -1854,6 +2062,125 @@ edit_env_command() {
     fi
 }
 
+ssl_cert_command() {
+    check_running_as_root
+
+    # Check if marzban is installed
+    if ! is_marzban_installed; then
+        colorized_echo red "Marzban is not installed. Please install Marzban first."
+        exit 1
+    fi
+
+    # Check if we're on Ubuntu (SSL setup is only supported on Ubuntu in this script)
+    detect_os
+    if [[ "$OS" != "Ubuntu"* ]]; then
+        colorized_echo red "SSL certificate generation is currently only supported on Ubuntu."
+        exit 1
+    fi
+
+    colorized_echo blue "====================================="
+    colorized_echo blue "    SSL Certificate Management"
+    colorized_echo blue "====================================="
+
+    # Parse command line arguments
+    local domains=""
+    local force_wildcard=false
+    local force_standard=false
+
+    while [[ $# -gt 0 ]]; do
+        case "$1" in
+            --domain)
+                domains="$2"
+                shift 2
+                ;;
+            --wildcard)
+                force_wildcard=true
+                shift
+                ;;
+            --standard)
+                force_standard=true
+                shift
+                ;;
+            *)
+                colorized_echo red "Unknown option: $1"
+                colorized_echo yellow "Usage: marzban ssl-cert [--domain domain1,domain2] [--wildcard|--standard]"
+                exit 1
+                ;;
+        esac
+    done
+
+    # If domains not provided via command line, prompt for them
+    if [ -z "$domains" ]; then
+        prompt_for_domains
+    else
+        IFS=',' read -ra DOMAIN_ARRAY <<< "$domains"
+        DOMAIN="${DOMAIN_ARRAY[0]}"
+
+        # Determine certificate type if not forced
+        if [ "$force_wildcard" = true ] && [ "$force_standard" = true ]; then
+            colorized_echo red "Cannot use both --wildcard and --standard options together."
+            exit 1
+        elif [ "$force_wildcard" = true ]; then
+            USE_WILDCARD=true
+            prompt_for_cloudflare_credentials
+        elif [ "$force_standard" = true ]; then
+            USE_WILDCARD=false
+        else
+            # Ask user for preference
+            colorized_echo blue "====================================="
+            colorized_echo blue "      Wildcard SSL Option"
+            colorized_echo blue "====================================="
+            colorized_echo yellow "Do you want to generate a wildcard+SAN SSL certificate?"
+            colorized_echo cyan "Wildcard+SAN certificate covers ALL domains you entered AND all their subdomains."
+            colorized_echo cyan "This creates a single certificate for maximum compatibility."
+            colorized_echo cyan "This requires Cloudflare DNS API credentials."
+            echo
+            while true; do
+                read -p "Generate wildcard SSL certificates? (y/n): " wildcard_choice
+                case $wildcard_choice in
+                    [Yy]* )
+                        USE_WILDCARD=true
+                        prompt_for_cloudflare_credentials
+                        break
+                        ;;
+                    [Nn]* )
+                        USE_WILDCARD=false
+                        colorized_echo green "Using standard SSL certificates with SAN for multiple domains."
+                        break
+                        ;;
+                    * )
+                        colorized_echo red "Please answer yes (y) or no (n)."
+                        ;;
+                esac
+            done
+        fi
+    fi
+
+    # Install SSL dependencies
+    install_ssl_dependencies
+
+    # Generate certificates
+    generate_ssl_certs
+
+    # Configure environment and services
+    configure_env_ssl
+    configure_haproxy
+    configure_ufw
+
+    # Restart services
+    colorized_echo blue "Restarting services to apply SSL configuration..."
+    restart_services
+
+    colorized_echo green "====================================="
+    colorized_echo green "SSL certificates have been successfully generated and configured!"
+    if [ "$USE_WILDCARD" = true ]; then
+        colorized_echo green "Wildcard certificates are now active for your domains."
+    else
+        colorized_echo green "Standard SSL certificates with SAN are now active for your domains."
+    fi
+    colorized_echo green "====================================="
+}
+
 usage() {
     local script_name="${0##*/}"
     colorized_echo blue "=============================="
@@ -1877,11 +2204,19 @@ usage() {
     colorized_echo yellow "  backup          $(tput sgr0)– Manual backup launch"
     colorized_echo yellow "  backup-service  $(tput sgr0)– Marzban Backupservice to backup to TG, and a new job in crontab"
     colorized_echo yellow "  core-update     $(tput sgr0)– Update/Change Xray core"
+    colorized_echo yellow "  ssl-cert        $(tput sgr0)– Generate/Update SSL certificates (supports wildcard)"
     colorized_echo yellow "  edit            $(tput sgr0)– Edit docker-compose.yml (via nano or vi editor)"
     colorized_echo yellow "  edit-env        $(tput sgr0)– Edit environment file (via nano or vi editor)"
     colorized_echo yellow "  help            $(tput sgr0)– Show this help message"
     
     
+    echo
+    colorized_echo cyan "SSL Certificate Examples:"
+    colorized_echo magenta "  marzban ssl-cert                                    # Interactive mode"
+    colorized_echo magenta "  marzban ssl-cert --domain example.com              # Standard SSL for single domain"
+    colorized_echo magenta "  marzban ssl-cert --domain example.com,sub.example.com --standard  # Standard SSL with SAN"
+    colorized_echo magenta "  marzban ssl-cert --domain example.com,another.com --wildcard      # Single Wildcard+SAN SSL"
+    colorized_echo magenta "    # Wildcard+SAN covers: *.example.com, example.com, *.another.com, another.com"
     echo
     colorized_echo cyan "Directories:"
     colorized_echo magenta "  App directory: $APP_DIR"
@@ -1917,6 +2252,8 @@ case "$1" in
         shift; install_marzban_script "$@";;
     core-update)
         shift; update_core_command "$@";;
+    ssl-cert)
+        shift; ssl_cert_command "$@";;
     edit)
         shift; edit_command "$@";;
     edit-env)
@@ -1924,23 +2261,3 @@ case "$1" in
     help|*)
         usage;;
 esac
-
-</final_file_content>
-
-IMPORTANT: For any future changes to this file, use the final_file_content shown above as your reference. This content reflects the current state of the file, including any auto-formatting (e.g., if you used single quotes but the formatter converted them to double quotes). Always base your SEARCH/REPLACE operations on this final version to ensure accuracy.<environment_details>
-# VSCode Visible Files
-marzban.sh
-
-# VSCode Open Tabs
-marzban-node.sh
-marzban.sh
-
-# Current Time
-6/21/2025, 7:16:06 PM (Asia/Rangoon, UTC+6.5:00)
-
-# Context Window Usage
-531,090 / 1,048.576K tokens used (51%)
-
-# Current Mode
-ACT MODE
-</environment_details>

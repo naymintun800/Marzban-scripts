@@ -1073,7 +1073,7 @@ backend panel
     server srv1 127.0.0.1:10000
 
 backend fallback
-    mode tcpcf_auth_choice
+    mode tcp
     server srv1 127.0.0.1:11000
 EOF
         fi
